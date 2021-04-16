@@ -8,29 +8,10 @@
 
 #include <circularBuffer.h>
 
-void CBInit(CB_Prop *CB_Prop, size_t numOfElements){
-	CB_Prop->numOfElements = numOfElements;
-	CB_Prop->buffer = malloc(numOfElements * sizeof(uint8_t));
-	CB_Prop->indexOfThisBuffer = numOfCircularBuffers;
-	numOfCircularBuffers++;
-	CircularBufferInit(CB_Prop);
-}
+static uint8_t numOfCircularBuffers = 0;
+static _CB_Struct _CircularBuffers[CIRCULAR_BUFFER_MAX];
 
-uint8_t GetRxData(CB_Prop *CB_Prop, uint8_t* src, uint8_t* dst, size_t srcSize, uint8_t* pHeader,uint8_t headerSize){
-	uint8_t err = 0;
-	size_t currentIdxOfCB =0;
-	while(CBRead(CB_Prop,&src[(currentIdxOfCB % (srcSize))])){
-		currentIdxOfCB++;
-	}
-	if(headerSize!=0 && SearchForBeginning(CB_Prop, pHeader, headerSize, srcSize)){
-		currentIdxOfCB = 0;
-		while(CBWrite(CB_Prop,&dst[currentIdxOfCB])){
-				currentIdxOfCB++;
-			}
-		err=1;
-	}
-	return err;
-}
+
 
 static uint8_t CircularBufferInit(CB_Prop *CB_Prop){
 	uint8_t idx = CB_Prop->indexOfThisBuffer;
@@ -83,7 +64,33 @@ static uint8_t CBWrite(CB_Prop *CB_Prop, uint8_t *data){
     return err;
 }
 
-static uint8_t SearchForBeginning(CB_Prop *CB_Prop, uint8_t* pHeader, uint8_t headerSize, uint8_t srcSize){
+static uint8_t crcCheck(uint8_t *message, size_t l){
+   uint32_t crc, msb;
+   uint8_t err = 0;
+   crc = 0xFFFFFFFF;
+
+   for(uint8_t i = 0; i < 4; i++){
+	   crcConverter.bytes[i] = message[l + i];
+   }
+
+   for(size_t i = 0; i < l; i++) {
+      // xor next byte to upper bits of crc
+      crc ^= (((uint32_t)message[i])<<24);
+      for (uint8_t j = 0; j < 8; j++) {    // Do eight times.
+            msb = crc>>31;
+            crc <<= 1;
+            crc ^= (0 - msb) & 0x04C11DB7;
+      }
+   }
+
+   if(crcConverter.fullData == crc){
+	   err = 1;
+   }
+
+   return err;
+}
+
+static uint8_t SearchForBeginning(CB_Prop *CB_Prop, uint8_t* pHeader, uint8_t headerSize, size_t srcSize){
 	uint8_t err = 0;
 	for(size_t i= 0; i<CB_Prop->numOfElements;i++){
 		if(_CircularBuffers[CB_Prop->indexOfThisBuffer].CB[i] == pHeader[0]){
@@ -102,28 +109,34 @@ static uint8_t SearchForBeginning(CB_Prop *CB_Prop, uint8_t* pHeader, uint8_t he
 	return err;
 }
 
-uint8_t crcCheck(uint8_t *message, size_t l){
-   uint32_t crc, msb;
-   uint8_t err = 0;
-   crc = 0xFFFFFFFF;
 
-   for(uint8_t i = 0; i < 4; i++){
-	   crcConverter.bytes[3-i] = message[l + i];
-   }
 
-   for(size_t i = 0; i < l; i++) {
-      // xor next byte to upper bits of crc
-      crc ^= (((uint32_t)message[i])<<24);
-      for (uint8_t j = 0; j < 8; j++) {    // Do eight times.
-            msb = crc>>31;
-            crc <<= 1;
-            crc ^= (0 - msb) & 0x04C11DB7;
-      }
-   }
+void CBInit(CB_Prop *CB_Prop, size_t numOfElements){
+	CB_Prop->numOfElements = numOfElements;
+	CB_Prop->buffer = malloc(numOfElements * sizeof(uint8_t));
+	CB_Prop->indexOfThisBuffer = numOfCircularBuffers;
+	numOfCircularBuffers++;
+	CircularBufferInit(CB_Prop);
+}
 
-   if(crcConverter.fullData == crc){
-	   err = 1;
-   }
+uint8_t GetRxData(CB_Prop *CB_Prop, uint8_t* src, uint8_t* dst, size_t srcSize, size_t rxSize, uint8_t* pHeader,uint8_t headerSize){
+	uint8_t err = 0;
+	size_t currentIdxOfCB =0;
+	while(CBRead(CB_Prop,&src[(currentIdxOfCB) % rxSize])){
+		currentIdxOfCB++;
+	}
 
-   return err;
+
+	currentIdxOfCB = 0;
+	if(headerSize!=0 && SearchForBeginning(CB_Prop, pHeader, headerSize, srcSize)){
+		while(CBWrite(CB_Prop,&dst[currentIdxOfCB])){
+			currentIdxOfCB++;
+		}
+		err=1;
+	}
+	else{
+		_CircularBuffers[CB_Prop->indexOfThisBuffer].tail = _CircularBuffers[CB_Prop->indexOfThisBuffer].head;
+	}
+
+	return err;
 }
